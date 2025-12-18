@@ -628,6 +628,8 @@ public class HornClaus {
     private Map<String, IASTFunctionDefinition> functions = new LinkedHashMap<>();
     private CHCs chcs;
 
+    public static String delimiter = "-";
+
     HornClaus(FunctionSymbol startFlow) {
         chcs = new CHCs(mkFunApp(startFlow));
     }
@@ -1340,22 +1342,22 @@ public class HornClaus {
         sb.append(name);
         sb.append(":");
         sb.append(loc.getStartingLineNumber());
-        sb.append("-");
+        sb.append(HornClaus.delimiter);
         sb.append(loc.getNodeOffset());
         for (var c: scope.getContext().reversed()) {
             sb.append(":");
             sb.append(c.getStartingLineNumber());
-            sb.append("-");
+            sb.append(HornClaus.delimiter);
             sb.append(c.getNodeOffset());
         }
         return new FunctionSymbol(sb.toString(), scope.signature());
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 2) {
+        if (args.length != 2 && args.length != 3) {
             System.out.println("***** HornClaus *****");
             System.out.println("usage:");
-            System.out.println("java -jar HornClaus.jar --[smt2|ari] program.c");
+            System.out.println("java -jar HornClaus.jar --[smt2|ari] [--delimiter=\"some string\"] program.c");
             System.exit(0);
         }
         var ari = args[0].equals("--ari");
@@ -1364,7 +1366,13 @@ public class HornClaus {
             System.exit(-1);
         }
 
-        FileContent fileContent = FileContent.createForExternalFileLocation(args[1]);
+        int fileArgIndex = 1;
+        if (args[1].startsWith("--delimiter=")) {
+            HornClaus.delimiter = args[1].substring("--delimiter=".length(), args[1].length());
+            fileArgIndex = 2;
+        }
+
+        FileContent fileContent = FileContent.createForExternalFileLocation(args[fileArgIndex]);
 
         Map<String, String> definedSymbols = new HashMap<>();
         String[] includePaths = new String[0];
