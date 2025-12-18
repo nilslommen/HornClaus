@@ -1035,6 +1035,7 @@ public class HornClaus {
                 case IASTSimpleDeclSpecifier.t_unspecified -> BaseType.Int;
                 default -> throw new IllegalArgumentException("unsupported type: " + spec.getRawSignature());
             };
+            case IASTEnumerationSpecifier spec -> BaseType.Int;
             default ->
                 throw new IllegalArgumentException("unsupported specifier: " + specifier.getRawSignature());
         };
