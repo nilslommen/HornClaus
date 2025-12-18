@@ -101,11 +101,12 @@ class TypedVar {
 
     public TypedVar(Type type, String name, Optional<Expression> initializer) {
         this.type = type;
-        if (name.startsWith("|")) {
-            this.name = name;
-        } else {
-            this.name = "|" + name + "|";
-        }
+        // if (name.startsWith("|")) {
+        //     this.name = name;
+        // } else {
+        //     this.name = "|" + name + "|";
+        // }
+        this.name = name;
         this.initializer = initializer;
     }
 
@@ -236,11 +237,12 @@ class Scope {
 class FunctionSymbol {
 
     public FunctionSymbol(String name, List<Type> type) {
-        if (name.startsWith("|")) {
-            this.name = name;
-        } else {
-            this.name = "|" + name + "|";
-        }
+        // if (name.startsWith("|")) {
+        //     this.name = name;
+        // } else {
+        //     this.name = "|" + name + "|";
+        // }
+        this.name = name;
         this.type = type;
     }
 
