@@ -439,16 +439,36 @@ class Flow {
 
     public Flow(FunctionSymbol normalFlow) {
         this.normalFlow = Optional.of(normalFlow);
+        returnFlow.add(new LinkedHashMap<>());
     }
 
-    Set<FunApp> breakFlow = new LinkedHashSet<>();
-    Set<FunApp> continueFlow = new LinkedHashSet<>();
-    Map<FunApp, Optional<Expression>> returnFlow = new LinkedHashMap<>();
+    ArrayList<Set<FunApp>> breakFlow = new ArrayList<>();
+    ArrayList<Set<FunApp>> continueFlow = new ArrayList<>();
+    ArrayList<Map<FunApp, Optional<Expression>>> returnFlow = new ArrayList<>();
     Optional<FunctionSymbol> normalFlow;
 
     void setFlow(FunctionSymbol normalFlow) {
         this.normalFlow = Optional.of(normalFlow);
     }
+
+    void execCall() {
+        returnFlow.add(new LinkedHashMap<>());
+    }
+
+    void execReturn() {
+        returnFlow.removeLast();
+    }
+
+    void enterLoop() {
+        breakFlow.add(new LinkedHashSet<>());
+        continueFlow.add(new LinkedHashSet<>());
+    }
+
+    void exitLoop() {
+        breakFlow.removeLast();
+        continueFlow.removeLast();
+    }
+
 }
 
 class Expression {
@@ -793,6 +813,7 @@ public class HornClaus {
     }
 
     Expression parseFunctionCall(IASTFunctionCallExpression functionCallExpression, Flow flow) {
+        flow.execCall();
         var preFlow = flow.normalFlow.get();
         var pre = mkFunApp(preFlow);
         switch (functionCallExpression.getFunctionNameExpression()) {
@@ -867,7 +888,7 @@ public class HornClaus {
                 }
                 parseStatement(fun.getBody(), flow);
                 Map<FunApp, Optional<Expression>> returns = new LinkedHashMap<>();
-                for (var e: flow.returnFlow.entrySet()) {
+                for (var e: flow.returnFlow.getLast().entrySet()) {
                     returns.put(e.getKey(), e.getValue());
                 }
                 if (flow.normalFlow.isPresent()) {
@@ -886,7 +907,7 @@ public class HornClaus {
                     chcs.addClause(e.getKey(), Expression.True, retRhs);
                 }
                 flow.setFlow(ret);
-                flow.returnFlow.clear();
+                flow.execReturn();
                 if (returnVar.isPresent()) {
                     scope.pop();
                     update(flow, pre, mkFunApp("drop_retval", functionCallExpression.getFileLocation()));
@@ -1142,12 +1163,13 @@ public class HornClaus {
     }
 
     void parseDo(IASTDoStatement doStatement, Flow flow) {
+        flow.enterLoop();
         var preFlow = flow.normalFlow.get();
         var pre = mkFunApp(preFlow);
         scope.push();
         parseStatement(doStatement.getBody(), flow);
-        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow);
-        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow);
+        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow.getLast());
+        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow.getLast());
         if (flow.normalFlow.isPresent()) {
             continues.add(mkFunApp(flow.normalFlow.get()));
         }
@@ -1164,11 +1186,11 @@ public class HornClaus {
         var exit = mkFunApp(exitFlow);
         addClauses(breaks, exit);
         update(flow, afterCheck, negate(cond), exit);
-        flow.breakFlow.clear();
-        flow.continueFlow.clear();
+        flow.exitLoop();
     }
 
     void parseWhile(IASTWhileStatement whileStatement, Flow flow) {
+        flow.enterLoop();
         var preFlow = flow.normalFlow.get();
         var pre = mkFunApp(preFlow);
         var cond = parseExpression(whileStatement.getCondition(), flow).toBool();
@@ -1179,8 +1201,8 @@ public class HornClaus {
         update(flow, afterCheck, cond, enter);
         scope.push();
         parseStatement(whileStatement.getBody(), flow);
-        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow);
-        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow);
+        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow.getLast());
+        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow.getLast());
         if (flow.normalFlow != null) {
             continues.add(mkFunApp(flow.normalFlow.get()));
         }
@@ -1190,13 +1212,13 @@ public class HornClaus {
         var exit = mkFunApp(exitFlow);
         addClauses(breaks, exit);
         update(flow, afterCheck, negate(cond), exit);
-        flow.breakFlow.clear();
-        flow.continueFlow.clear();
+        flow.exitLoop();
     }
 
     void parseFor(IASTForStatement forStatement, Flow flow) {
         scope.push();
         parseStatement(forStatement.getInitializerStatement(), flow);
+        flow.enterLoop();
         var preFlow = flow.normalFlow.get();
         var pre = mkFunApp(preFlow);
         var cond = parseExpression(forStatement.getConditionExpression(), flow).toBool();
@@ -1207,8 +1229,8 @@ public class HornClaus {
         update(flow, afterCheck, cond, enter);
         scope.push();
         parseStatement(forStatement.getBody(), flow);
-        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow);
-        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow);
+        ArrayList<FunApp> continues = new ArrayList<>(flow.continueFlow.getLast());
+        ArrayList<FunApp> breaks = new ArrayList<>(flow.breakFlow.getLast());
         if (flow.normalFlow.isPresent()) {
             continues.add(mkFunApp(flow.normalFlow.get()));
         }
@@ -1225,8 +1247,7 @@ public class HornClaus {
         var exit = mkFunApp("for_exit", forStatement.getFileLocation());
         addClauses(breaks, exit);
         update(flow, pre, negate(cond), exit);
-        flow.breakFlow.clear();
-        flow.continueFlow.clear();
+        flow.exitLoop();
     }
 
     void pop(IASTFileLocation endOfScope, Flow flow) {
@@ -1279,12 +1300,12 @@ public class HornClaus {
     void parseStatement(IASTStatement statement, Flow flow) {
         switch (statement) {
             case IASTBreakStatement breakStatement -> {
-                flow.breakFlow.add(mkFunApp(flow.normalFlow.get()));
+                flow.breakFlow.getLast().add(mkFunApp(flow.normalFlow.get()));
                 flow.normalFlow = Optional.empty();
             }
             case IASTCaseStatement caseStatement -> throw new IllegalArgumentException("switch is not yet supported");
             case IASTContinueStatement continueStatement -> {
-                flow.continueFlow.add(mkFunApp(flow.normalFlow.get()));
+                flow.continueFlow.getLast().add(mkFunApp(flow.normalFlow.get()));
                 flow.normalFlow = Optional.empty();
             }
             case IASTDeclarationStatement declarationStatement -> {
@@ -1308,9 +1329,9 @@ public class HornClaus {
             case IASTReturnStatement returnStatement -> {
                 var ret = returnStatement.getReturnValue();
                 if (ret == null) {
-                    flow.returnFlow.put(mkFunApp(flow.normalFlow.get()), Optional.empty());
+                    flow.returnFlow.getLast().put(mkFunApp(flow.normalFlow.get()), Optional.empty());
                 } else {
-                    flow.returnFlow.put(mkFunApp(flow.normalFlow.get()), Optional.of(parseExpression(ret, flow)));
+                    flow.returnFlow.getLast().put(mkFunApp(flow.normalFlow.get()), Optional.of(parseExpression(ret, flow)));
                 }
                 flow.normalFlow = Optional.empty();
             }
