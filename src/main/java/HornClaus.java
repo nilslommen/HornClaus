@@ -650,7 +650,10 @@ public class HornClaus {
     private Map<String, IASTFunctionDefinition> functions = new LinkedHashMap<>();
     private CHCs chcs;
 
+    public static boolean ari;
     public static String delimiter = ":";
+    public static String filename;
+    public static boolean invert = false;
 
     HornClaus(FunctionSymbol startFlow) {
         chcs = new CHCs(mkFunApp(startFlow));
@@ -825,7 +828,7 @@ public class HornClaus {
                     switch (argEx) {
                         case IASTExpression ex -> {
                             var arg = parseExpression(ex, flow).toBool();
-                            chcs.addQuery(mkFunApp(preFlow), negate(arg));
+                            chcs.addQuery(mkFunApp(preFlow), invert ? arg : negate(arg));
                             var postFlow = mkFunctionSymbol("postAssert", functionCallExpression.getFileLocation());
                             update(flow, mkFunApp(preFlow), arg, mkFunApp(postFlow));
                             return Expression.True;
@@ -856,35 +859,36 @@ public class HornClaus {
                     returnVar = Optional.of(scope.addVar(name + "_res", new Type(returnType, 0), Optional.empty()));
                     update(flow, pre, mkFunApp("decl_retval", functionCallExpression.getFileLocation()));
                 }
-                scope.execCall(functionCallExpression.getFileLocation());
-                scope.push();
-                ArrayList<TypedVar> args = new ArrayList<>();
-                switch (fun.getDeclarator()) {
-                    case IASTStandardFunctionDeclarator functionDeclarator -> {
-                        for (var param: functionDeclarator.getParameters()) {
-                            var type = parseDeclSpecifier(param.getDeclSpecifier());
-                            var arg = parseDeclarator(param.getDeclarator(), type, flow).get();
-                            args.add(arg);
-                        }
-                    }
-                    default -> throw new IllegalArgumentException("unsupported function declarator: " + fun.getDeclarator().getRawSignature());
-                }
-                Map<TypedVar, Expression> actualArgs = new LinkedHashMap<>();
-                int i = 0;
+                ArrayList<Expression> actualArgs = new ArrayList<>();
                 for (var init: functionCallExpression.getArguments()) {
                     switch (init) {
                         case IASTExpression ex -> {
-                            actualArgs.put(args.get(i), parseExpression(ex, flow).toType(args.get(i).type));
-                            ++i;
+                            actualArgs.add(parseExpression(ex, flow));
                         }
                         default -> throw new IllegalArgumentException("unsupported function argument: " + init.getRawSignature());
                     }
 
                 }
+                scope.execCall(functionCallExpression.getFileLocation());
+                scope.push();
+                int i = 0;
+                Map<TypedVar, Expression> args = new LinkedHashMap<>();
+                switch (fun.getDeclarator()) {
+                    case IASTStandardFunctionDeclarator functionDeclarator -> {
+                        for (var param: functionDeclarator.getParameters()) {
+                            var type = parseDeclSpecifier(param.getDeclSpecifier());
+                            var arg = parseDeclarator(param.getDeclarator(), type, flow).get();
+                            args.put(arg, actualArgs.get(i).toType(arg.type));
+                            ++i;
+                        }
+                    }
+                    default -> throw new IllegalArgumentException("unsupported function declarator: " + fun.getDeclarator().getRawSignature());
+                }
+
                 var postInitFlow = flow.normalFlow.get();
                 if (i > 0) {
                     var callFlow = mkFunctionSymbol("call", functionCallExpression.getFileLocation());
-                    update(flow, mkFunApp(postInitFlow), mkFunApp(callFlow, actualArgs));
+                    update(flow, mkFunApp(postInitFlow), mkFunApp(callFlow, args));
                 }
                 parseStatement(fun.getBody(), flow);
                 Map<FunApp, Optional<Expression>> returns = new LinkedHashMap<>();
@@ -1376,26 +1380,34 @@ public class HornClaus {
         return new FunctionSymbol(sb.toString(), scope.signature());
     }
 
+    static void parseCommandlineOptions(String[] args) {
+        for (int i = 0; i < args.length - 1; ++i) {
+            switch (args[i]) {
+                case "--ari" -> HornClaus.ari = true;
+                case "--smt2" -> HornClaus.ari = false;
+                case String s when s.startsWith("--delimiter=") -> HornClaus.delimiter = s.substring("--delimiter=".length());
+                case "--invert" -> HornClaus.invert = true;
+                default -> throw new IllegalArgumentException("unknown command line flag " + args[i]);
+            }
+        }
+        HornClaus.filename = args[args.length - 1];
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length != 2 && args.length != 3) {
-            System.out.println("***** HornClaus *****");
+            System.out.println("***** HornKlaus *****");
             System.out.println("usage:");
-            System.out.println("java -jar HornClaus.jar --[smt2|ari] [--delimiter=\"some string\"] program.c");
+            System.out.println("java -jar HornClaus.jar OPTIONS [--invert] program.c");
+            System.out.println("mandatory options:");
+            System.out.println("    --[smt2|ari]:                specifies the output format (SMT-LIB or ARI)");
+            System.out.println("other options:");
+            System.out.println("    --delimiter=\"some string\": specifies the delimiter that is used in identifiers");
+            System.out.println("    --invert:                    causese HornKlaus to negate the conditions of all assertions");
             System.exit(0);
         }
-        var ari = args[0].equals("--ari");
-        if (!ari && !args[0].equals("--smt2")) {
-            System.err.println("unknown format " + args[0]);
-            System.exit(-1);
-        }
+        parseCommandlineOptions(args);
 
-        int fileArgIndex = 1;
-        if (args[1].startsWith("--delimiter=")) {
-            HornClaus.delimiter = args[1].substring("--delimiter=".length(), args[1].length());
-            fileArgIndex = 2;
-        }
-
-        FileContent fileContent = FileContent.createForExternalFileLocation(args[fileArgIndex]);
+        FileContent fileContent = FileContent.createForExternalFileLocation(filename);
 
         Map<String, String> definedSymbols = new HashMap<>();
         String[] includePaths = new String[0];
