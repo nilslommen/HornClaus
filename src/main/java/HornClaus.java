@@ -140,9 +140,11 @@ class Scope {
     private ArrayList<IASTFileLocation> context = new ArrayList<>();
     private Map<String, Expression> enums = new LinkedHashMap<>();
     private Map<String, BaseType> typedefs = new LinkedHashMap<>();
+    private static String retVarName = "__HORN_KLAUS_return";
 
     Scope() {
         vars.add(new LinkedHashMap<>());
+        addVar(retVarName, Type.Int, Optional.empty());
     }
 
     void push() {
@@ -170,6 +172,10 @@ class Scope {
             }
         }
         return Optional.empty();
+    }
+
+    TypedVar getReturnVar() {
+        return getVar(retVarName).get();
     }
 
     Optional<BaseType> isUndefined(String name) {
@@ -851,12 +857,6 @@ public class HornClaus {
                 }
                 var fun = functions.get(name);
                 var returnType = parseDeclSpecifier(fun.getDeclSpecifier());
-                Optional<TypedVar> returnVar = Optional.empty();
-                if (returnType != BaseType.Void) {
-                    scope.push();
-                    returnVar = Optional.of(scope.addVar(name + "_res", new Type(returnType, 0), Optional.empty()));
-                    update(flow, pre, mkFunApp("decl_retval", functionCallExpression.getFileLocation()));
-                }
                 ArrayList<Expression> actualArgs = new ArrayList<>();
                 for (var init: functionCallExpression.getArguments()) {
                     switch (init) {
@@ -899,23 +899,18 @@ public class HornClaus {
                 scope.pop();
                 scope.execReturn();
                 var ret = mkFunctionSymbol(name + "_return", functionCallExpression.getFileLocation());
+                var rhs = mkFunApp(ret);
                 for (var e : returns.entrySet()) {
-                    FunApp retRhs;
-                    if (returnType == BaseType.Void) {
-                        retRhs = mkFunApp(ret);
-                    } else {
-                        retRhs = mkFunApp(ret, Map.of(returnVar.get(), e.getValue().get()));
-                    }
+                    FunApp retRhs = switch (returnType) {
+                        case BaseType.Void -> rhs;
+                        case BaseType.Int -> mkFunApp(ret, Map.of(scope.getReturnVar(), e.getValue().get()));
+                        case BaseType.Bool -> mkFunApp(ret, Map.of(scope.getReturnVar(), e.getValue().get().toInt()));
+                    };
                     chcs.addClause(e.getKey(), Expression.True, retRhs);
                 }
                 flow.setFlow(ret);
                 flow.execReturn();
-                if (returnVar.isPresent()) {
-                    scope.pop();
-                    update(flow, pre, mkFunApp("drop_retval", functionCallExpression.getFileLocation()));
-                    return Util.mkAtom(returnVar.get());
-                }
-                return Expression.True;
+                return Util.mkAtom(scope.getReturnVar());
             }
             default -> throw new IllegalArgumentException("unsupoprted function call: " + functionCallExpression.getRawSignature());
         }
@@ -1394,13 +1389,12 @@ public class HornClaus {
     public static void main(String[] args) throws Exception {
         if (args.length != 2 && args.length != 3) {
             System.out.println("***** HornKlaus *****");
-            System.out.println("usage:");
-            System.out.println("java -jar HornClaus.jar OPTIONS [--invert] program.c");
+            System.out.println("usage: java -ea -jar HornKlaus.jar OPTIONS program.c");
             System.out.println("mandatory options:");
-            System.out.println("    --[smt2|ari]:                specifies the output format (SMT-LIB or ARI)");
+            System.out.println("    --[smt2|ari]        specifies the output format (SMT-LIB or ARI)");
             System.out.println("other options:");
-            System.out.println("    --delimiter=\"some string\": specifies the delimiter that is used in identifiers");
-            System.out.println("    --invert:                    causese HornKlaus to negate the conditions of all assertions");
+            System.out.println("    --delimiter=$STRING specifies the delimiter that is used in identifiers (default: colon)");
+            System.out.println("    --invert            causese HornKlaus to negate the conditions of all assertions (default: false)");
             System.exit(0);
         }
         parseCommandlineOptions(args);
@@ -1421,8 +1415,8 @@ public class HornClaus {
         if (translationUnit.getIncludeDirectives().length > 0) {
             System.err.println("includes are not supported");
         }
-
-        var startFlow = new FunctionSymbol("start", List.of());
+        // the only argument of the start symbol is the auxiliary variable for return values
+        var startFlow = new FunctionSymbol("start", List.of(Type.Int));
         HornClaus parser = new HornClaus(startFlow);
         var flow = new Flow(startFlow);
         for (var declaration : translationUnit.getDeclarations()) {
